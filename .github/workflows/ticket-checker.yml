@@ -5,7 +5,7 @@ name: Ticket Status Checker
 on:
   # 1. スケジュール実行：5分ごとに自動で実行(GitHub Actionsのcronは最短でも5分間隔)
   schedule:
-    - cron: '*/50 * * * *'
+    - cron: '*/5 * * * *'
     
   # 2. 手動実行：Actionsタブから手動でテスト実行できるようにする
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
             -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
 
           # 予定枚数終了の文字列が【含まれていない】かチェック
-          if echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
+          if ! echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
             echo "チケットはまだ購入可能です。メール通知します。"
             # 次のステップに 'true' という結果を渡す
             echo "available=true" >> $GITHUB_OUTPUT
