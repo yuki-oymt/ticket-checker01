@@ -10,17 +10,18 @@ on:
   # 2. 手動実行：Actionsタブから手動でテスト実行できるようにする
   workflow_dispatch:
 
-# 実行するジョブ（一連の仕事）の定義
+# 実行するジョブの定義
 jobs:
   check-and-notify:
     # 実行環境として、最新のUbuntu（Linux）を指定
     runs-on: ubuntu-latest
     
-    # このジョブ全体で使う環境変数を定義
+    # 環境変数を定義
     env:
-      TICKET_URL: "https://ticket.pia.jp/sp/ticketInformation.do?eventCd=2548300&rlsCd=001"
+      TICKET_URL_POST: "https://ticket.pia.jp/sp/ticketInformation.do?eventCd=2548300&rlsCd=001"
+      TICKET_URL_TOP: "https://w.pia.jp/p/sixtones26ip-aco/"
 
-    # 実行するステップ（手順）の定義
+    # 実行するステップの定義
     steps:
       # ステップ1: チケットの状況をチェックし、結果を次のステップに渡す
       - name: Check Ticket Status
@@ -31,14 +32,14 @@ jobs:
           echo "チケットの状況を確認しています..."
           
           # curlコマンドでWebサイトの情報を取得
-          RESPONSE=$(curl -s -X POST "$TICKET_URL" \
+          RESPONSE=$(curl -s -X POST "$TICKET_URL_POST" \
             -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
             -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
 
           # 予定枚数終了の文字列が【含まれていない】かチェック
           if echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
-            echo "チケットはまだ購入可能です。通知を準備します。"
-            # 次のステップに 'true' という結果を渡すための特殊な記法
+            echo "チケットはまだ購入可能です。メール通知します。"
+            # 次のステップに 'true' という結果を渡す
             echo "available=true" >> $GITHUB_OUTPUT
           else
             echo "チケットは予定枚数終了です。"
@@ -46,13 +47,13 @@ jobs:
             echo "available=false" >> $GITHUB_OUTPUT
           fi
 
-      # ステップ2: もしステップ1の結果が 'true' なら、メールを送信する
+      # ステップ2: ステップ1の結果が 'true' なら、メールを送信する
       - name: Send Email Notification
         # 'check'ステップの出力(outputs)が 'true' の場合のみ、このステップを実行する
         if: steps.check.outputs.available == 'true'
         uses: dawidd6/action-send-mail@v3 # Marketplaceにあるメール送信アクションを呼び出す
         with:
-          # サーバー情報 (ステップ3で登録したSecretsから安全に読み込む)
+          # secretsから読み込み
           server_address: ${{ secrets.MAIL_SERVER }}
           server_port: ${{ secrets.MAIL_PORT }}
           username: ${{ secrets.MAIL_USERNAME }}
@@ -60,6 +61,6 @@ jobs:
           
           # メールの内容
           subject: "チケット購入可能のお知らせ"
-          body: "チケットが購入可能になりました！\n\nURL: ${{ env.TICKET_URL }}"
-          to: ${{ secrets.MAIL_USERNAME }} # 自分自身（Secretsに登録したアドレス）に送信
-          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>" # 送信者名（Gmailでは結局自分のアドレスになります）
+          body: "チケットが購入可能になりました！\n\nURL: ${{ env.TICKET_URL_TOP }}"
+          to: ${{ secrets.MAIL_USERNAME }} # Secretsに登録したメールアドレスに送信
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
