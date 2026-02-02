@@ -36,7 +36,7 @@ jobs:
             -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
 
           # 予定枚数終了の文字列が【含まれていない】かチェック
-          if  echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
+          if echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
             echo "チケットはまだ購入可能です。通知を準備します。"
             # 次のステップに 'true' という結果を渡すための特殊な記法
             echo "available=true" >> $GITHUB_OUTPUT
