@@ -3,8 +3,6 @@ name: Ticket Status Checker
 
 # ワークフローを実行するタイミング
 on:
-  # スケジュール実行は削除しました
-  
   # 手動およびAPI（Lambda）からの実行用
   workflow_dispatch:
 
@@ -17,8 +15,9 @@ jobs:
     timeout-minutes: 5
 
     env:
-      TICKET_URL_POST: "https://ticket.pia.jp/sp/ticketInformation.do?eventCd=2548300&rlsCd=001"
-      TICKET_URL_TOP: "https://w.pia.jp/p/sixtones26ip-aco/"
+      # ここを直接のURLからSecretsの参照に変更しました
+      TICKET_URL_POST: ${{ secrets.TICKET_URL_POST }}
+      TICKET_URL_TOP: ${{ secrets.TICKET_URL_TOP }}
 
     steps:
       - name: Check Ticket Status
@@ -28,7 +27,7 @@ jobs:
           
           echo "チケットの状況を確認します（1回実行）..."
 
-          # curl実行（ステータスコードと本文を取得）
+          # curl実行（URLは環境変数 $TICKET_URL_POST から読み込まれます）
           HTTP_STATUS=$(curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
             -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
             -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
@@ -62,6 +61,7 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "チケット購入可能のお知らせ"
+          # URLも環境変数経由で埋め込まれます
           body: "チケットが購入可能になりました！\n\nURL: ${{ env.TICKET_URL_TOP }}"
           to: ${{ secrets.MAIL_USERNAME }}
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
