@@ -3,12 +3,9 @@ name: Ticket Status Checker
 
 # ワークフローを実行するタイミング
 on:
-  schedule:
-    # JST 09:00 - 23:55 まで5分おきに実行
-    # UTC 00:00 - 14:00 (0-14)
-    - cron: '*/5 0-14 * * *'
+  # スケジュール実行は削除しました
   
-  # 手動実行用（インデントを修正しました）
+  # 手動およびAPI（Lambda）からの実行用
   workflow_dispatch:
 
 # 実行するジョブ
@@ -16,8 +13,8 @@ jobs:
   check-and-notify:
     runs-on: ubuntu-latest
     
-    # 万が一の暴走防止のため、タイムアウトを25分に設定（20回リトライ×1分 ＋ α）
-    timeout-minutes: 25
+    # 1回だけ実行ですぐ終わるため、タイムアウトを5分に短縮
+    timeout-minutes: 5
 
     env:
       TICKET_URL_POST: "https://ticket.pia.jp/sp/ticketInformation.do?eventCd=2548300&rlsCd=001"
@@ -28,51 +25,34 @@ jobs:
         id: check
         run: |
           SEARCH_STRING="label-release none'>予定枚数終了"
-          MAX_RETRIES=20   # 20回リトライ（×1分 = 最大20分稼働）
+          
+          echo "チケットの状況を確認します（1回実行）..."
 
-          echo "チケットの監視を開始します（最大${MAX_RETRIES}回試行）..."
+          # curl実行（ステータスコードと本文を取得）
+          HTTP_STATUS=$(curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
+            -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
+            -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
+          
+          echo "HTTP Status: $HTTP_STATUS"
+          
+          # HTTPステータスコードのチェック
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "HTTP Error ($HTTP_STATUS). チェックに失敗しました。"
+            echo "available=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
-          # 1からMAX_RETRIESまでループ
-          for (( i=1; i<=MAX_RETRIES; i++ )); do
-            echo "【試行回数: $i/$MAX_RETRIES】 ステータス確認中..."
+          RESPONSE=$(cat response_body.html)
 
-            # curl実行（ステータスコードと本文を取得）
-            HTTP_STATUS=$(curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
-              -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
-              -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
-            
-            RESPONSE=$(cat response_body.html)
+          # 「予定枚数終了」が含まれて【いない】かチェック
+          if ! echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
+            echo "SUCCESS: チケットは現在購入可能です！"
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "FAILURE: 予定枚数終了（Sold Out）です。"
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
 
-            # 1. HTTPステータスコードのチェック (200以外は失敗とみなしてリトライ)
-            if [ "$HTTP_STATUS" -ne 200 ]; then
-              echo "HTTP Error ($HTTP_STATUS). リトライします..."
-              # リトライ処理へ進む（下部のsleepへ）
-            
-            # 2. 「予定枚数終了」が含まれて【いない】かチェック (成功判定)
-            elif ! echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
-              echo "SUCCESS: チケットは現在購入可能です！"
-              echo "available=true" >> $GITHUB_OUTPUT
-              
-              # 見つかったので成功終了（ループを抜けて次のステップへ）
-              exit 0
-            
-            else
-              # 3. 「予定枚数終了」が含まれている場合
-              echo "FAILURE: 予定枚数終了（Sold Out）です。"
-            fi
-
-            # まだループ回数が残っている場合、1分待機
-            if [ $i -lt $MAX_RETRIES ]; then
-              echo "1分待機して再度チェックします..."
-              sleep 60
-            else
-              echo "GIVE UP: リトライ上限に達しました。"
-            fi
-          done
-
-          # ループを抜けた（＝20回ともダメだった）場合
-          echo "available=false" >> $GITHUB_OUTPUT
-      
       - name: Send Email Notification
         if: steps.check.outputs.available == 'true'
         uses: dawidd6/action-send-mail@v3
