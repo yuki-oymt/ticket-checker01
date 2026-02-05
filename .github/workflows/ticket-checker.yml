@@ -3,17 +3,16 @@ name: Ticket Status Checker
 
 # ワークフローを実行するタイミングの定義
 on:
-  # 1. スケジュール実行：5分ごとに自動で実行(GitHub Actionsのcronは最短でも5分間隔)
+  # 1. スケジュール実行：5分ごとに自動で実行
   schedule:
     - cron: '*/5 * * * *'
     
-  # 2. 手動実行：Actionsタブから手動でテスト実行できるようにする
+  # 2. 手動実行
   workflow_dispatch:
 
 # 実行するジョブの定義
 jobs:
   check-and-notify:
-    # 実行環境として、最新のUbuntu（Linux）を指定
     runs-on: ubuntu-latest
     
     # 環境変数を定義
@@ -21,46 +20,69 @@ jobs:
       TICKET_URL_POST: "https://ticket.pia.jp/sp/ticketInformation.do?eventCd=2548300&rlsCd=001"
       TICKET_URL_TOP: "https://w.pia.jp/p/sixtones26ip-aco/"
 
-    # 実行するステップの定義
     steps:
       # ステップ1: チケットの状況をチェックし、結果を次のステップに渡す
       - name: Check Ticket Status
-        id: check # このステップに 'check' というIDを付けて識別できるようにする
+        id: check
         run: |
           SEARCH_STRING="label-release none'>予定枚数終了"
+          MAX_RETRIES=10      # 最大リトライ回数（無限ループ防止）
+          RETRY_COUNT=0
+          HTTP_STATUS=0
           
           echo "チケットの状況を確認しています..."
           
-          # curlコマンドでWebサイトの情報を取得
-          RESPONSE=$(curl -s -X POST "$TICKET_URL_POST" \
-            -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
-            -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
+          # リトライループ処理
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            # curlコマンド実行
+            # -s: 静音モード
+            # -o response_body.html: レスポンス本文をファイルに保存
+            # -w "%{http_code}": ステータスコードのみを標準出力に表示
+            HTTP_STATUS=$(curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
+              -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
+              -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
+            
+            echo "HTTP Status: $HTTP_STATUS"
+            
+            # ステータスコードが200ならループを抜ける
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              break
+            fi
+            
+            echo "ステータスコードが200ではありません。10秒待機してリトライします... ($((RETRY_COUNT+1))/$MAX_RETRIES)"
+            sleep 10
+            RETRY_COUNT=$((RETRY_COUNT+1))
+          done
+          
+          # 最大回数リトライしても200にならなかった場合のエラーハンドリング
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: リトライ上限に達しましたが、正常なレスポンスが得られませんでした。"
+            echo "available=false" >> $GITHUB_OUTPUT
+            exit 0 # ワークフロー自体を失敗させたくない場合はexit 0、失敗扱いにしたい場合はexit 1
+          fi
+
+          # ファイルに保存したレスポンス本文を読み込む
+          RESPONSE=$(cat response_body.html)
 
           # 予定枚数終了の文字列が【含まれていない】かチェック
           if ! echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
             echo "チケットはまだ購入可能です。メール通知します。"
-            # 次のステップに 'true' という結果を渡す
             echo "available=true" >> $GITHUB_OUTPUT
           else
             echo "チケットは予定枚数終了です。"
-            # 次のステップに 'false' という結果を渡す
             echo "available=false" >> $GITHUB_OUTPUT
           fi
 
       # ステップ2: ステップ1の結果が 'true' なら、メールを送信する
       - name: Send Email Notification
-        # 'check'ステップの出力(outputs)が 'true' の場合のみ、このステップを実行する
         if: steps.check.outputs.available == 'true'
-        uses: dawidd6/action-send-mail@v3 # Marketplaceにあるメール送信アクションを呼び出す
+        uses: dawidd6/action-send-mail@v3
         with:
-          # secretsから読み込み
           server_address: ${{ secrets.MAIL_SERVER }}
           server_port: ${{ secrets.MAIL_PORT }}
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          
-          # メールの内容
           subject: "チケット購入可能のお知らせ"
           body: "チケットが購入可能になりました！\n\nURL: ${{ env.TICKET_URL_TOP }}"
-          to: ${{ secrets.MAIL_USERNAME }} # Secretsに登録したメールアドレスに送信
+          to: ${{ secrets.MAIL_USERNAME }}
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
