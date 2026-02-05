@@ -1,4 +1,3 @@
-# ワークフローの名前
 name: Ticket Status Checker
 
 # ワークフローを実行するタイミング
@@ -6,16 +5,13 @@ on:
   # 手動およびAPI（Lambda）からの実行用
   workflow_dispatch:
 
-# 実行するジョブ
 jobs:
   check-and-notify:
     runs-on: ubuntu-latest
     
-    # 1回だけ実行ですぐ終わるため、タイムアウトを5分に短縮
     timeout-minutes: 5
 
     env:
-      # ここを直接のURLからSecretsの参照に変更しました
       TICKET_URL_POST: ${{ secrets.TICKET_URL_POST }}
       TICKET_URL_TOP: ${{ secrets.TICKET_URL_TOP }}
 
@@ -23,18 +19,21 @@ jobs:
       - name: Check Ticket Status
         id: check
         run: |
+          echo "====== RUNNER IP ADDRESS ======"
+          curl -s https://ifconfig.me
+          echo "" # 改行
+          echo "==============================="
+
           SEARCH_STRING="label-release none'>予定枚数終了"
           
-          echo "チケットの状況を確認します（1回実行）..."
+          echo "チケットの状況を確認します..."
 
-          # curl実行（URLは環境変数 $TICKET_URL_POST から読み込まれます）
           HTTP_STATUS=$(curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
             -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
             -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
           
           echo "HTTP Status: $HTTP_STATUS"
           
-          # HTTPステータスコードのチェック
           if [ "$HTTP_STATUS" -ne 200 ]; then
             echo "HTTP Error ($HTTP_STATUS). チェックに失敗しました。"
             echo "available=false" >> $GITHUB_OUTPUT
@@ -48,7 +47,7 @@ jobs:
             echo "SUCCESS: チケットは現在購入可能です！"
             echo "available=true" >> $GITHUB_OUTPUT
           else
-            echo "FAILURE: 予定枚数終了（Sold Out）です。"
+            echo "FAILURE: 予定枚数終了です。"
             echo "available=false" >> $GITHUB_OUTPUT
           fi
 
@@ -61,7 +60,6 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "チケット購入可能のお知らせ"
-          # URLも環境変数経由で埋め込まれます
           body: "チケットが購入可能になりました！\n\nURL: ${{ env.TICKET_URL_TOP }}"
           to: ${{ secrets.MAIL_USERNAME }}
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
