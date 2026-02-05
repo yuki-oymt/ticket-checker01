@@ -1,14 +1,11 @@
 name: Ticket Status Checker
 
-# ワークフローを実行するタイミング
 on:
-  # 手動およびAPI（Lambda）からの実行用
   workflow_dispatch:
 
 jobs:
   check-and-notify:
     runs-on: ubuntu-latest
-    
     timeout-minutes: 5
 
     env:
@@ -19,37 +16,85 @@ jobs:
       - name: Check Ticket Status
         id: check
         run: |
-          echo "====== RUNNER IP ADDRESS ======"
-          curl -s https://ifconfig.me
-          echo "" # 改行
-          echo "==============================="
+          # --- 1. 準備 ---
+          pip install beautifulsoup4
 
-          SEARCH_STRING="label-release none'>予定枚数終了"
+          curl -s https://ifconfig.me
+          echo ""
           
           echo "チケットの状況を確認します..."
 
-          HTTP_STATUS=$(curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
+          # --- 2. 実行: HTML取得 ---
+          # 失敗しても止まらないように '|| true' をつける
+          curl -s -o response_body.html -w "%{http_code}" -X POST "$TICKET_URL_POST" \
             -d "afid=" -d "tid=" -d "slcd=" -d "acptNo=" \
-            -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true")
+            -d "firstModalFlg=true" -d "simpleAuthFlg=true" -d "lpViewFlg=true" > status_code.txt || true
           
+          HTTP_STATUS=$(cat status_code.txt)
           echo "HTTP Status: $HTTP_STATUS"
-          
+
           if [ "$HTTP_STATUS" -ne 200 ]; then
-            echo "HTTP Error ($HTTP_STATUS). チェックに失敗しました。"
+            echo "HTTP Error ($HTTP_STATUS). チェック失敗。"
             echo "available=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          RESPONSE=$(cat response_body.html)
+          # --- 3. 解析: Pythonで画像を判定 ---
+          python3 -c "
+          import os
+          import sys
+          from bs4 import BeautifulSoup
 
-          # 「予定枚数終了」が含まれて【いない】かチェック
-          if ! echo "$RESPONSE" | grep -q "$SEARCH_STRING"; then
-            echo "SUCCESS: チケットは現在購入可能です！"
-            echo "available=true" >> $GITHUB_OUTPUT
-          else
-            echo "FAILURE: 予定枚数終了です。"
-            echo "available=false" >> $GITHUB_OUTPUT
-          fi
+          try:
+              with open('response_body.html', 'r', encoding='utf-8', errors='ignore') as f:
+                  html = f.read()
+          except FileNotFoundError:
+              print('Error: HTML file not found')
+              sys.exit(1)
+
+          soup = BeautifulSoup(html, 'html.parser')
+
+          # ページが正常かチェック
+          if not soup.find('body'):
+              print('FAILURE: ページの中身が不正です')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print('available=false', file=fh)
+              sys.exit(0)
+
+          # 【判定ロジック】
+          # クラス名 'btn-seat-status-label-img' を持つ画像（購入ボタンのアイコン）を全て取得
+          status_images = soup.select('.btn-seat-status-label-img')
+          
+          if not status_images:
+              print('WARNING: 判定対象の画像が見つかりませんでした（ページ構成変更の可能性）')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print('available=false', file=fh)
+              sys.exit(0)
+
+          found_available = False
+
+          print(f'判定対象のボタン数: {len(status_images)} 個')
+
+          for img in status_images:
+              alt_text = img.get('alt', '')
+              
+              # '空席あり' または '残りわずか' が含まれていれば購入可能と判断
+              if '空席あり' in alt_text or '残りわずか' in alt_text:
+                  print(f'SUCCESS: 購入可能な席が見つかりました！ ({alt_text})')
+                  found_available = True
+                  break
+              
+              # デバッグ用: どんなステータスだったか表示
+              # print(f'Status: {alt_text}') 
+
+          if found_available:
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print('available=true', file=fh)
+          else:
+              print('FAILURE: すべて売り切れ、または取扱なしです。')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print('available=false', file=fh)
+          "
 
       - name: Send Email Notification
         if: steps.check.outputs.available == 'true'
